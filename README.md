@@ -17,17 +17,40 @@ SQLX for DB mapping
 .
 ├── go.mod
 ├── go.sum
-├── main.go                    // Initializes DB, services, handlers, and routes
+├── main.go
 └── service/
-    ├── handler/               // Business logic (service layer)
-    ├── libhttp/               // HTTP handlers + Gin routes
-    ├── models/                // Database models (structs)
+    ├── handler/          # Business logic layer
+    │   ├── book_service.go
+    │   ├── member_service.go
+    │   ├── borrow_service.go
+    │   ├── borrowdetails_service.go
+    │   ├── category_service.go
+    │   └── user_service.go
+    │
+    ├── libhttp/          # HTTP layer (Gin handlers + routes)
+    │   ├── book_handler.go
+    │   ├── member_handler.go
+    │   ├── borrow_handler.go
+    │   ├── borrowdetails_handler.go
+    │   ├── category_handler.go
+    │   ├── auth_handler.go
+    │   └── routes.go
+    │
+    ├── models/           # Data models (DB + JSON)
+    │   └── models.go
+    │
     └── repository/
-        ├── repository.go      // Interfaces (abstraction over DB operations)
+        ├── repository.go # Interfaces for repos
         └── db/
-            ├── db.go          // DB connection using sqlx
-            ├── queries.go     // SQL queries
-            └── repo files...  // Implementations for Books, Members, Borrow, etc.
+            ├── db.go     # PostgreSQL connection
+            ├── queries.go
+            ├── book_repo.go
+            ├── member_repo.go
+            ├── borrow_repo.go
+            ├── borrowdetails_repo.go
+            ├── category_repo.go
+            └── user_repo.go
+
 
 -Each layer has a single responsibility.
 -Handlers NEVER interact with the database directly — they call services.
@@ -36,13 +59,37 @@ SQLX for DB mapping
 -JWT authentication protects admin routes.
 -All major entities (Book, Member, Borrow, Category, User) have dedicated models, repository implementations, and service logic.
 
-**Database Setup**
-Create the database:
-CREATE DATABASE librarymanagement;
+**Architecture Overview**
+HTTP Layer (Gin Handlers)
+        ↓
+Service Layer (Business Logic)
+        ↓
+Repository Layer (Interfaces)
+        ↓
+DB Layer (SQLX + PostgreSQL)
 
-Insert default admin:
-INSERT INTO users (username, password, role)
-VALUES ('admin', 'admin', 'admin');
+
+**Database Setup**
+1)Create the database:
+CREATE DATABASE librarymanagement;
+2)Create required tables
+Tables used:
+book
+member
+borrow
+borrowdetails
+category
+users
+Example: Users table (for login)
+CREATE TABLE users (
+  user_id SERIAL PRIMARY KEY,
+  username VARCHAR(100),
+  password VARCHAR(100),
+  firstname VARCHAR(100),
+  lastname VARCHAR(100),
+  role VARCHAR(20)
+);
+3)Environment variables- Change the DATABASE_URL accroding to your database setup 
 
 **HOW TO RUN**
 1) Clone the repository-
