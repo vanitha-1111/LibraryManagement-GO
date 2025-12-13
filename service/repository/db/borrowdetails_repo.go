@@ -18,32 +18,35 @@ func NewBorrowDetailRepo(db *sqlx.DB) *BorrowDetailRepoImpl {
 }
 
 // CreateBorrowDetail: transactional
-// 1) decrement book copies safely (only if >0)
-// 2) insert borrowdetail record with status 'pending'
-// commits only if both succeed
 func (r *BorrowDetailRepoImpl) CreateBorrowDetail(bd *models.BorrowDetail) (*models.BorrowDetail, error) {
 	tx, err := r.DB.Beginx()
 	if err != nil {
 		return nil, err
 	}
-	// if anything goes wrong we rollback
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Always rollback unless commit succeeds
+	defer tx.Rollback()
 
-	// Attempt to decrement book copies; if no rows returned -> book unavailable
-	var remaining int
-	if err = tx.Get(&remaining, DecrementBookCopiesQuery, bd.BookID); err != nil {
-		return nil, errors.New("book not available or out of copies")
+	// 1) Lock the row
+	var currentCopies int
+	err = tx.Get(&currentCopies, `SELECT book_copies FROM book WHERE book_id=$1 FOR UPDATE`, bd.BookID)
+	if err != nil {
+		return nil, err
 	}
 
-	// prepare borrow detail record
+	if currentCopies <= 0 {
+		return nil, errors.New("book is out of stock")
+	}
+
+	// 2) Decrement safely
+	_, err = tx.Exec(DecrementBookCopiesQuery, bd.BookID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 3) Insert borrow detail
 	bd.BorrowStatus = "pending"
 	bd.DateReturn = nil
 
-	// insert borrow detail using named params
 	rows, err := tx.NamedQuery(InsertBorrowDetailQuery, bd)
 	if err != nil {
 		return nil, err
@@ -59,8 +62,8 @@ func (r *BorrowDetailRepoImpl) CreateBorrowDetail(bd *models.BorrowDetail) (*mod
 		return nil, errors.New("failed to insert borrow detail")
 	}
 
-	// commit transaction
-	if err = tx.Commit(); err != nil {
+	// 4) Commit
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -69,21 +72,15 @@ func (r *BorrowDetailRepoImpl) CreateBorrowDetail(bd *models.BorrowDetail) (*mod
 }
 
 // ReturnBorrowDetail: transactional
-// - ensure borrowdetail exists and not already returned
-// - set borrow_status = 'returned', date_return = now
-// - increment book copies
 func (r *BorrowDetailRepoImpl) ReturnBorrowDetail(borrowDetailID int) error {
 	tx, err := r.DB.Beginx()
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-		}
-	}()
+	// Always rollback unless committed
+	defer tx.Rollback()
 
-	// fetch the borrowdetail row
+	// 1) Get borrow detail
 	var bd models.BorrowDetail
 	if err = tx.Get(&bd, GetBorrowDetailByIDQuery, borrowDetailID); err != nil {
 		return err
@@ -93,24 +90,27 @@ func (r *BorrowDetailRepoImpl) ReturnBorrowDetail(borrowDetailID int) error {
 		return errors.New("borrow detail already returned")
 	}
 
-	now := time.Now().Format("2006-01-02 15:04:05")
+	// 2) Lock book row
+	var currentCopies int
+	err = tx.Get(&currentCopies, `SELECT book_copies FROM book WHERE book_id=$1 FOR UPDATE`, bd.BookID)
+	if err != nil {
+		return err
+	}
 
-	// update borrowdetails
+	// 3) Update borrow detail
+	now := time.Now().Format("2006-01-02 15:04:05")
 	if _, err = tx.Exec(UpdateBorrowDetailStatusQuery, "returned", now, borrowDetailID); err != nil {
 		return err
 	}
 
-	// increment book copies
+	// 4) Increment book copies
 	var newCopies int
 	if err = tx.Get(&newCopies, IncrementBookCopiesQuery, bd.BookID); err != nil {
 		return err
 	}
 
-	// commit
-	if err = tx.Commit(); err != nil {
-		return err
-	}
-	return nil
+	// 5) Commit
+	return tx.Commit()
 }
 
 // GetBorrowDetailsByBorrowID returns details with book titles
@@ -121,6 +121,7 @@ func (r *BorrowDetailRepoImpl) GetBorrowDetailsByBorrowID(borrowID int) ([]model
 	}
 	return list, nil
 }
+
 func (r *BorrowDetailRepoImpl) GetMemberBorrowHistory(memberID int) ([]models.BorrowHistoryItem, error) {
 	var list []models.BorrowHistoryItem
 
